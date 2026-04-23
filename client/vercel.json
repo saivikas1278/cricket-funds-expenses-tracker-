@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:match*",
+      "destination": "https://cricket-funds-expenses-tracker.onrender.com/api/:match*"
+    }
+  ]
+}
