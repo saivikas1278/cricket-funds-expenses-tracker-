@@ -28,9 +28,21 @@ CREATE TABLE IF NOT EXISTS public.payments (
   CONSTRAINT payments_player_week_unique UNIQUE (player_id, week_identifier)
 );
 
--- 3) Optimization Indexes
+-- 3) Expenses Table
+CREATE TABLE IF NOT EXISTS public.expenses (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'Equipment',
+  amount NUMERIC(10,2) NOT NULL,
+  expense_date DATE NOT NULL DEFAULT current_date,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 4) Optimization Indexes
 CREATE INDEX IF NOT EXISTS idx_payments_week_identifier ON public.payments (week_identifier);
 CREATE INDEX IF NOT EXISTS idx_payments_player_id ON public.payments (player_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON public.expenses (expense_date);
 
 -- 4) Sample Player Roster Seed
 -- Now that the players_name_key is guaranteed to exist via the ALTER TABLE, this will work perfectly.

@@ -33,13 +33,14 @@ app.get('/api/stats/header', async (req, res) => {
         ? requestedWeekIdentifier
         : getCurrentWeekIdentifier()
 
-    const [allPaymentsResult, activePlayersResult, activePlayerPaymentsResult] = await Promise.all([
+    const [allPaymentsResult, activePlayersResult, activePlayerPaymentsResult, expensesResult] = await Promise.all([
       supabaseAdmin.from('payments').select('amount'),
       supabaseAdmin.from('players').select('id').eq('is_active', true),
       supabaseAdmin
         .from('players')
         .select('id, payments!left(amount, week_identifier)')
         .eq('is_active', true),
+      supabaseAdmin.from('expenses').select('amount'),
     ])
 
     if (allPaymentsResult.error || activePlayersResult.error || activePlayerPaymentsResult.error) {
@@ -59,6 +60,12 @@ app.get('/api/stats/header', async (req, res) => {
       (allPaymentsResult.data || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
     )
 
+    const totalSpent = Number(
+      (expensesResult.data || []).reduce((sum, exp) => sum + Number(exp.amount || 0), 0),
+    )
+
+    const netBalance = totalFundCollected - totalSpent
+
     const totalActivePlayers = (activePlayersResult.data || []).length
     const paidPlayers = (activePlayerPaymentsResult.data || []).filter((player) => {
       const weeklyPayment = (player.payments || []).find(
@@ -76,6 +83,8 @@ app.get('/api/stats/header', async (req, res) => {
       ok: true,
       weekIdentifier,
       totalFundCollected,
+      totalSpent,
+      netBalance,
       thisWeek: {
         playersPaid: paidPlayers,
         totalActivePlayers,
@@ -342,19 +351,19 @@ app.delete('/api/players/:playerId', async (req, res) => {
 })
 
 app.get('/api/public-dashboard', async (req, res) => {
-  const week = Number(req.query.week)
-
-  if (!Number.isInteger(week) || week <= 0) {
-    res.status(400).json({ error: 'Invalid week query parameter.' })
-    return
-  }
+  const weekQuery = req.query.week
+  const weekNum = Number(weekQuery)
+  const currentYear = new Date().getUTCFullYear()
+  const weekIdentifier = Number.isInteger(weekNum) && weekNum > 0
+    ? `${currentYear}-W${String(weekNum).padStart(2, '0')}`
+    : String(weekQuery || getCurrentWeekIdentifier())
 
   const [playersResult, paymentsResult] = await Promise.all([
-    supabaseAdmin.from('players').select('id, name').order('name', { ascending: true }),
+    supabaseAdmin.from('players').select('id, name').eq('is_active', true).order('name', { ascending: true }),
     supabaseAdmin
       .from('payments')
-      .select('player_id, is_paid')
-      .eq('week_number', week),
+      .select('player_id, amount')
+      .eq('week_identifier', weekIdentifier),
   ])
 
   if (playersResult.error || paymentsResult.error) {
@@ -362,33 +371,33 @@ app.get('/api/public-dashboard', async (req, res) => {
     return
   }
 
-  const paymentStatusByPlayerId = new Map(
-    (paymentsResult.data || []).map((payment) => [payment.player_id, payment.is_paid]),
+  const paymentMap = new Map(
+    (paymentsResult.data || []).map((payment) => [payment.player_id, Number(payment.amount || 0)]),
   )
 
   const players = (playersResult.data || []).map((player) => ({
     id: player.id,
     name: player.name,
-    isPaid: paymentStatusByPlayerId.get(player.id) === true,
+    isPaid: (paymentMap.get(player.id) || 0) >= weeklyFee,
   }))
 
-  res.json({ players, weeklyFee })
+  res.json({ players, weeklyFee, weekIdentifier })
 })
 
 app.get('/api/admin-dashboard', async (req, res) => {
-  const week = Number(req.query.week)
-
-  if (!Number.isInteger(week) || week <= 0) {
-    res.status(400).json({ error: 'Invalid week query parameter.' })
-    return
-  }
+  const weekQuery = req.query.week
+  const weekNum = Number(weekQuery)
+  const currentYear = new Date().getUTCFullYear()
+  const weekIdentifier = Number.isInteger(weekNum) && weekNum > 0
+    ? `${currentYear}-W${String(weekNum).padStart(2, '0')}`
+    : String(weekQuery || getCurrentWeekIdentifier())
 
   const [playersResult, paymentsResult] = await Promise.all([
-    supabaseAdmin.from('players').select('id, name').order('name', { ascending: true }),
+    supabaseAdmin.from('players').select('id, name, is_active').eq('is_active', true).order('name', { ascending: true }),
     supabaseAdmin
       .from('payments')
-      .select('player_id, is_paid')
-      .eq('week_number', week),
+      .select('player_id, amount')
+      .eq('week_identifier', weekIdentifier),
   ])
 
   if (playersResult.error || paymentsResult.error) {
@@ -398,13 +407,14 @@ app.get('/api/admin-dashboard', async (req, res) => {
 
   const paymentStatusByPlayer = {}
   ;(paymentsResult.data || []).forEach((payment) => {
-    paymentStatusByPlayer[payment.player_id] = payment.is_paid === true
+    paymentStatusByPlayer[payment.player_id] = Number(payment.amount || 0) >= weeklyFee
   })
 
   res.json({
     players: playersResult.data || [],
     paymentStatusByPlayer,
     weeklyFee,
+    weekIdentifier,
   })
 })
 
@@ -418,8 +428,8 @@ app.post('/api/admin/players', async (req, res) => {
 
   const { data, error } = await supabaseAdmin
     .from('players')
-    .insert({ name })
-    .select('id, name')
+    .insert({ name, is_active: true })
+    .select('id, name, is_active')
     .single()
 
   if (error) {
@@ -432,27 +442,42 @@ app.post('/api/admin/players', async (req, res) => {
 
 app.post('/api/admin/payments/upsert', async (req, res) => {
   const playerId = req.body?.playerId
-  const week = Number(req.body?.week)
+  const weekParam = req.body?.week || req.body?.weekIdentifier
   const isPaid = req.body?.isPaid === true
 
-  if (!playerId || !Number.isInteger(week) || week <= 0) {
+  if (!playerId) {
     res.status(400).json({ error: 'Invalid payment payload.' })
     return
   }
 
-  const { error } = await supabaseAdmin.from('payments').upsert(
-    {
-      player_id: playerId,
-      week_number: week,
-      amount: isPaid ? weeklyFee : 0,
-      is_paid: isPaid,
-    },
-    { onConflict: 'player_id,week_number' },
-  )
+  const currentYear = new Date().getUTCFullYear()
+  const weekIdentifier = typeof weekParam === 'number'
+    ? `${currentYear}-W${String(weekParam).padStart(2, '0')}`
+    : String(weekParam || getCurrentWeekIdentifier())
 
-  if (error) {
-    res.status(500).json({ error: error.message || 'Failed to update payment status.' })
-    return
+  if (isPaid) {
+    const { error } = await supabaseAdmin.from('payments').upsert(
+      {
+        player_id: playerId,
+        amount: weeklyFee,
+        payment_date: new Date().toISOString().slice(0, 10),
+        week_identifier: weekIdentifier,
+      },
+      { onConflict: 'player_id,week_identifier' },
+    )
+    if (error) {
+      res.status(500).json({ error: error.message || 'Failed to update payment status.' })
+      return
+    }
+  } else {
+    const { error } = await supabaseAdmin.from('payments').delete().match({
+      player_id: playerId,
+      week_identifier: weekIdentifier,
+    })
+    if (error) {
+      res.status(500).json({ error: error.message || 'Failed to update payment status.' })
+      return
+    }
   }
 
   res.json({ ok: true })
@@ -461,32 +486,160 @@ app.post('/api/admin/payments/upsert', async (req, res) => {
 app.get('/api/transparency', async (req, res) => {
   try {
     const currentWeek = getCurrentWeekIdentifier()
+    const selectedMonth = String(req.query.month || '').trim() // format 'YYYY-MM' or empty
     
-    const { data, error } = await supabaseAdmin
-      .from('players')
-      .select('id, name, payments!left(amount, week_identifier)')
-      .eq('is_active', true)
-      .order('name', { ascending: true })
+    const [playersRes, expensesRes] = await Promise.all([
+      supabaseAdmin
+        .from('players')
+        .select('id, name, payments!left(amount, payment_date, week_identifier)')
+        .eq('is_active', true)
+        .order('name', { ascending: true }),
+      supabaseAdmin
+        .from('expenses')
+        .select('*')
+        .order('expense_date', { ascending: false })
+    ])
 
-    if (error) {
+    if (playersRes.error) {
       res.status(500).json({ ok: false, error: 'Failed to load transparency summary.' })
       return
     }
 
-    const players = (data || []).map(player => {
-      const hasPaidThisWeek = (player.payments || []).some(p => p.week_identifier === currentWeek && Number(p.amount) >= weeklyFee)
+    let allTimeCollected = 0
+    let monthlyCollected = 0
+
+    const players = (playersRes.data || []).map(player => {
+      const allPayments = player.payments || []
+      const hasPaidThisWeek = allPayments.some(p => p.week_identifier === currentWeek && Number(p.amount) >= weeklyFee)
+      const totalContributed = allPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0)
       
+      const monthPayments = selectedMonth
+        ? allPayments.filter(p => p.payment_date && p.payment_date.startsWith(selectedMonth))
+        : allPayments
+      const monthlyContributed = monthPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0)
+
+      allTimeCollected += totalContributed
+      monthlyCollected += monthlyContributed
+
       return {
         id: player.id,
         name: player.name,
         isPaidThisWeek: hasPaidThisWeek,
-        totalContributed: (player.payments || []).reduce((sum, p) => sum + Number(p.amount || 0), 0)
+        totalContributed,
+        monthlyContributed
       }
     })
 
-    res.json({ ok: true, currentWeek, players })
+    const allExpenses = expensesRes.data || []
+    const allTimeSpent = allExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0)
+    
+    const filteredExpenses = selectedMonth
+      ? allExpenses.filter(e => e.expense_date && e.expense_date.startsWith(selectedMonth))
+      : allExpenses
+    const monthlySpent = filteredExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0)
+
+    const monthlyBalance = monthlyCollected - monthlySpent
+    const netBalance = allTimeCollected - allTimeSpent
+
+    res.json({
+      ok: true,
+      currentWeek,
+      selectedMonth,
+      totalCollected: selectedMonth ? monthlyCollected : allTimeCollected,
+      totalSpent: selectedMonth ? monthlySpent : allTimeSpent,
+      netBalance: selectedMonth ? monthlyBalance : netBalance,
+      allTimeCollected,
+      allTimeSpent,
+      allTimeBalance: netBalance,
+      monthlyCollected,
+      monthlySpent,
+      monthlyBalance,
+      players,
+      expenses: filteredExpenses
+    })
   } catch (error) {
     res.status(500).json({ ok: false, error: 'Unexpected error' })
+  }
+})
+
+app.get('/api/expenses', async (_req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('expenses')
+      .select('*')
+      .order('expense_date', { ascending: false })
+
+    if (error) {
+      res.status(500).json({ ok: false, error: error.message || 'Failed to fetch expenses.' })
+      return
+    }
+
+    const expenses = data || []
+    const totalSpent = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0)
+
+    res.json({ ok: true, expenses, totalSpent })
+  } catch (error) {
+    res.status(500).json({ ok: false, error: 'Unexpected error fetching expenses.' })
+  }
+})
+
+app.post('/api/expenses', async (req, res) => {
+  try {
+    const title = String(req.body?.title || '').trim()
+    const category = String(req.body?.category || 'Equipment').trim()
+    const amount = Number(req.body?.amount || 0)
+    const expenseDate = String(req.body?.expenseDate || new Date().toISOString().slice(0, 10))
+    const notes = String(req.body?.notes || '').trim()
+
+    if (!title || amount <= 0) {
+      res.status(400).json({ ok: false, error: 'Valid title and positive amount are required.' })
+      return
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('expenses')
+      .insert({
+        title,
+        category,
+        amount,
+        expense_date: expenseDate,
+        notes,
+      })
+      .select('*')
+      .single()
+
+    if (error) {
+      res.status(500).json({ ok: false, error: error.message || 'Failed to record expense.' })
+      return
+    }
+
+    res.status(201).json({ ok: true, expense: data })
+  } catch (error) {
+    res.status(500).json({ ok: false, error: 'Unexpected error recording expense.' })
+  }
+})
+
+app.delete('/api/expenses/:id', async (req, res) => {
+  try {
+    const expenseId = String(req.params.id || '').trim()
+    if (!expenseId) {
+      res.status(400).json({ ok: false, error: 'Expense ID required.' })
+      return
+    }
+
+    const { error } = await supabaseAdmin
+      .from('expenses')
+      .delete()
+      .eq('id', expenseId)
+
+    if (error) {
+      res.status(500).json({ ok: false, error: error.message || 'Failed to delete expense.' })
+      return
+    }
+
+    res.json({ ok: true, message: 'Expense removed.' })
+  } catch (error) {
+    res.status(500).json({ ok: false, error: 'Unexpected error deleting expense.' })
   }
 })
 

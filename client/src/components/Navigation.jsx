@@ -34,16 +34,29 @@ const Navigation = () => {
             Admin Login
           </NavLink>
         ) : (
-          <NavLink 
-            to="/admin" 
-            className={({ isActive }) => 
-              `px-4 sm:px-6 py-2 sm:py-3 rounded-xl text-base sm:text-lg font-bold transition-colors ${
-                isActive ? 'bg-cricketGreen text-white' : 'text-slate-700 hover:bg-white hover:text-cricketGreen'
-              }`
-            }
-          >
-            Dashboard
-          </NavLink>
+          <>
+            <NavLink 
+              to="/admin" 
+              end
+              className={({ isActive }) => 
+                `px-4 sm:px-6 py-2 sm:py-3 rounded-xl text-base sm:text-lg font-bold transition-colors ${
+                  isActive ? 'bg-cricketGreen text-white' : 'text-slate-700 hover:bg-white hover:text-cricketGreen'
+                }`
+              }
+            >
+              Dashboard
+            </NavLink>
+            <NavLink 
+              to="/admin/players" 
+              className={({ isActive }) => 
+                `px-4 sm:px-6 py-2 sm:py-3 rounded-xl text-base sm:text-lg font-bold transition-colors ${
+                  isActive ? 'bg-cricketGreen text-white' : 'text-slate-700 hover:bg-white hover:text-cricketGreen'
+                }`
+              }
+            >
+              Player Roster
+            </NavLink>
+          </>
         )}
       </div>
     </nav>

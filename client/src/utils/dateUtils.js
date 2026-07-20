@@ -77,10 +77,42 @@ export function generateWeekHistory(historyArray) {
     failsafe--;
   }
   
-  // If player has literally 0 history, we just show current week
   if (allWeeks.length === 0) {
      allWeeks.push(currentWeekStr);
   }
   
   return allWeeks;
+}
+
+export function getCurrentMonthIdentifier(date = new Date()) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+}
+
+export function formatMonthLabel(monthStr) {
+  if (!monthStr) return '';
+  const [yearStr, monthNumStr] = monthStr.split('-');
+  const year = parseInt(yearStr, 10);
+  const monthNum = parseInt(monthNumStr, 10) - 1;
+  const d = new Date(Date.UTC(year, monthNum, 1));
+  return d.toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+export function generateAvailableMonths(startYear = 2024) {
+  const now = new Date();
+  const currentYear = now.getUTCFullYear();
+  const currentMonth = now.getUTCMonth(); // 0-indexed
+
+  const months = [];
+  for (let y = currentYear; y >= startYear; y--) {
+    const endM = y === currentYear ? currentMonth : 11;
+    const startM = 0;
+    for (let m = endM; m >= startM; m--) {
+      const val = `${y}-${String(m + 1).padStart(2, '0')}`;
+      const label = formatMonthLabel(val);
+      months.push({ value: val, label });
+    }
+  }
+  return months;
 }

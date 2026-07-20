@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { Search, ChevronRight, CheckCircle, Circle, UserPlus, LogOut, ArrowRightCircle, Trash2, X, CalendarDays, ChevronLeft } from 'lucide-react';
+import { Search, ChevronRight, CheckCircle, Circle, UserPlus, LogOut, ArrowRightCircle, Trash2, X, CalendarDays, ChevronLeft, PlusCircle, ShoppingBag, PiggyBank, Wallet, Receipt } from 'lucide-react';
 import supabase from '../supabaseClient';
 import PaymentTable from '../components/PaymentTable';
+import ExpenseTable from '../components/ExpenseTable';
 import { getCurrentWeekIdentifier, formatMonthWeek } from '../utils/dateUtils';
 
 const WEEKLY_FEE = 50;
@@ -27,10 +28,20 @@ function AdminDashboard() {
   
   const [players, setPlayers] = useState([]);
   const [globalStats, setGlobalStats] = useState(null);
+  const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submittingByPlayer, setSubmittingByPlayer] = useState({});
   const [newPlayerName, setNewPlayerName] = useState('');
   
+  // Expense Form State
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [expenseTitle, setExpenseTitle] = useState('');
+  const [expenseCategory, setExpenseCategory] = useState('Balls');
+  const [expenseAmount, setExpenseAmount] = useState('');
+  const [expenseDate, setExpenseDate] = useState(new Date().toISOString().slice(0, 10));
+  const [expenseNotes, setExpenseNotes] = useState('');
+  const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
+
   const [isRemoveModalOpen, setIsRemoveModalOpen] = useState(false);
   
   const [historySearchTerm, setHistorySearchTerm] = useState('');
@@ -46,9 +57,10 @@ function AdminDashboard() {
   const loadData = async (targetWeek) => {
     setLoading(true);
     try {
-      const [summaryRes, statsRes] = await Promise.all([
+      const [summaryRes, statsRes, expensesRes] = await Promise.all([
         fetch(`/api/payments/summary?week_identifier=${targetWeek}`),
-        fetch(`/api/stats/header?week_identifier=${targetWeek}`)
+        fetch(`/api/stats/header?week_identifier=${targetWeek}`),
+        fetch(`/api/expenses`)
       ]);
       
       if (summaryRes.ok) {
@@ -58,6 +70,10 @@ function AdminDashboard() {
       if (statsRes.ok) {
         const stats = await statsRes.json();
         setGlobalStats(stats);
+      }
+      if (expensesRes.ok) {
+        const expData = await expensesRes.json();
+        setExpenses(expData.expenses || []);
       }
     } catch (_error) {
       toast.error('Unable to load dashboard data.');
@@ -92,11 +108,10 @@ function AdminDashboard() {
     };
   }, [selectedHistoryPlayer]);
 
-  // Yes/No Selection Logic
   async function handlePaymentStatusChange(player, newIsPaid) {
     if (submittingByPlayer[player.id]) return;
     
-    if (player.isPaid === newIsPaid) return; // Ignore if clicking the already active option
+    if (player.isPaid === newIsPaid) return;
 
     setSubmittingByPlayer((prev) => ({ ...prev, [player.id]: true }));
 
@@ -132,11 +147,12 @@ function AdminDashboard() {
         )
       );
       
-      // Update header statistics visually
       if (globalStats) {
+        const diff = newIsPaid ? WEEKLY_FEE : -WEEKLY_FEE;
         setGlobalStats(prev => ({
           ...prev,
-          totalFundCollected: prev.totalFundCollected + (newIsPaid ? WEEKLY_FEE : -WEEKLY_FEE),
+          totalFundCollected: (prev.totalFundCollected || 0) + diff,
+          netBalance: (prev.netBalance || 0) + diff,
           thisWeek: {
             ...prev.thisWeek,
             playersPaid: prev.thisWeek.playersPaid + (newIsPaid ? 1 : -1),
@@ -169,6 +185,55 @@ function AdminDashboard() {
       loadData(weekIdentifier);
     } catch (err) {
       toast.error('Failed to add player');
+    }
+  }
+
+  async function handleAddExpense(e) {
+    e.preventDefault();
+    if (!expenseTitle.trim() || !expenseAmount || Number(expenseAmount) <= 0) {
+      toast.error('Please provide a valid title and positive amount.');
+      return;
+    }
+
+    setIsSubmittingExpense(true);
+    try {
+      const res = await fetch('/api/expenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: expenseTitle.trim(),
+          category: expenseCategory,
+          amount: Number(expenseAmount),
+          expenseDate,
+          notes: expenseNotes.trim()
+        })
+      });
+
+      if (!res.ok) throw new Error('Failed to record expense.');
+
+      toast.success('Expense recorded successfully!');
+      setExpenseTitle('');
+      setExpenseAmount('');
+      setExpenseNotes('');
+      setIsExpenseModalOpen(false);
+      loadData(weekIdentifier);
+    } catch (err) {
+      toast.error(err.message || 'Could not add expense.');
+    } finally {
+      setIsSubmittingExpense(false);
+    }
+  }
+
+  async function handleDeleteExpense(expenseId, title) {
+    if (!window.confirm(`Delete expense "${title}"?`)) return;
+
+    try {
+      const res = await fetch(`/api/expenses/${expenseId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      toast.success('Expense deleted.');
+      loadData(weekIdentifier);
+    } catch (err) {
+      toast.error('Could not delete expense.');
     }
   }
 
@@ -228,7 +293,14 @@ function AdminDashboard() {
              </div>
            </div>
 
-           <div className="flex gap-4 w-full sm:w-auto mt-4 sm:mt-0">
+           <div className="flex flex-wrap gap-3 w-full sm:w-auto mt-4 sm:mt-0">
+             <button 
+               onClick={() => setIsExpenseModalOpen(true)}
+               className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 border-2 border-emerald-700 text-white font-bold px-6 py-3 rounded-lg transition-colors shadow-sm"
+             >
+               <PlusCircle className="w-5 h-5"/> Log Expense
+             </button>
+
              <button 
                onClick={() => setIsRemoveModalOpen(true)}
                className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-red-100 hover:bg-red-200 border-2 border-red-300 text-red-800 font-bold px-6 py-3 rounded-lg transition-colors"
@@ -248,21 +320,27 @@ function AdminDashboard() {
         {/* Global Statistics Header */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white p-8 rounded-2xl border-2 border-slate-200 shadow-none flex flex-col justify-center text-center">
-            <h2 className="text-sm font-black uppercase tracking-widest text-slate-400 mb-2">Total Collected (All-Time)</h2>
+            <h2 className="text-sm font-black uppercase tracking-widest text-slate-400 mb-2 flex items-center justify-center gap-2">
+              <Wallet className="w-4 h-4 text-cricketGreen" /> Total Collected
+            </h2>
             <p className="text-4xl lg:text-5xl font-black text-slate-800">
-              Rs. {globalStats ? globalStats.totalFundCollected : '...'}
+              Rs. {globalStats ? Number(globalStats.totalFundCollected).toLocaleString('en-IN') : '...'}
             </p>
           </div>
-          <div className="bg-cricketGreen text-white p-8 rounded-2xl border-2 border-[#1E4D38] shadow-none flex flex-col justify-center text-center">
-            <h2 className="text-sm font-black uppercase tracking-widest opacity-80 mb-2">Collected (Selected Week)</h2>
-            <p className="text-4xl lg:text-5xl font-black">
-              Rs. {globalStats ? globalStats.thisWeek.playersPaid * WEEKLY_FEE : '...'}
+          <div className="bg-white p-8 rounded-2xl border-2 border-red-200 shadow-none flex flex-col justify-center text-center">
+            <h2 className="text-sm font-black uppercase tracking-widest text-red-400 mb-2 flex items-center justify-center gap-2">
+              <ShoppingBag className="w-4 h-4 text-red-600" /> Total Spent
+            </h2>
+            <p className="text-4xl lg:text-5xl font-black text-red-600">
+              Rs. {globalStats ? Number(globalStats.totalSpent).toLocaleString('en-IN') : '...'}
             </p>
           </div>
-          <div className="bg-red-500 text-white p-8 rounded-2xl border-2 border-red-700 flex flex-col justify-center text-center">
-            <h2 className="text-sm font-black uppercase tracking-widest opacity-80 mb-2">Pending (Selected Week)</h2>
+          <div className="bg-cricketGreen text-white p-8 rounded-2xl border-2 border-[#1E4D38] flex flex-col justify-center text-center">
+            <h2 className="text-sm font-black uppercase tracking-widest opacity-80 mb-2 flex items-center justify-center gap-2">
+              <PiggyBank className="w-4 h-4 text-green-200" /> Available Balance
+            </h2>
             <p className="text-4xl lg:text-5xl font-black">
-              Rs. {globalStats ? globalStats.thisWeek.pendingAmount : '...'}
+              Rs. {globalStats ? Number(globalStats.netBalance).toLocaleString('en-IN') : '...'}
             </p>
           </div>
         </div>
@@ -295,7 +373,6 @@ function AdminDashboard() {
                         </span>
                       </div>
                       
-                      {/* Modern Flat Design Yes/No Radio Toggle */}
                       <div className="w-full sm:w-auto shrink-0 flex items-center bg-flatSecondary border-2 border-slate-200 rounded-lg p-1 gap-1">
                          <button 
                             onClick={() => handlePaymentStatusChange(player, true)}
@@ -320,7 +397,6 @@ function AdminDashboard() {
               </div>
             )}
             
-            {/* Flat Add Player Tool */}
             <section className="bg-flatSecondary p-6 sm:p-8 rounded-2xl border-2 border-slate-200 mt-6 md:mt-10 overflow-hidden">
               <h2 className="text-xl font-black text-slate-900 mb-4 flex items-center gap-2">
                  <UserPlus className="w-6 h-6"/> Register Player
@@ -343,70 +419,189 @@ function AdminDashboard() {
             </section>
           </section>
 
-          {/* RIGHT COLUMN: Search & History */}
-          <section className="space-y-6">
-            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 flex items-center gap-3">
-              Player History
-            </h2>
-            
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                <Search className="h-6 w-6 text-slate-400 stroke-[2.5]" />
+          {/* RIGHT COLUMN: Expense Ledger & Player History */}
+          <section className="space-y-8">
+            {/* Expense Management Ledger */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl sm:text-3xl font-black text-slate-900 flex items-center gap-2">
+                  <Receipt className="w-7 h-7 text-emerald-700" /> Expense Ledger
+                </h2>
+                <button
+                  onClick={() => setIsExpenseModalOpen(true)}
+                  className="text-sm font-black bg-emerald-50 text-emerald-700 border-2 border-emerald-300 hover:bg-emerald-100 px-4 py-2 rounded-xl transition-colors flex items-center gap-1.5"
+                >
+                  <PlusCircle className="w-4 h-4" /> Add Expense
+                </button>
               </div>
-              <input 
-                type="text"
-                value={historySearchTerm}
-                onChange={(e) => {
-                   setHistorySearchTerm(e.target.value);
-                   setSelectedHistoryPlayer(null);
-                }}
-                placeholder="Search admin roster by name..."
-                className="w-full pl-12 pr-4 py-5 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-cricketGreen text-slate-900 placeholder-slate-400 font-bold text-lg transition-colors"
-              />
+
+              <ExpenseTable expenses={expenses} loading={loading} onDelete={handleDeleteExpense} />
             </div>
 
-            {!selectedHistoryPlayer && historySearchTerm.trim() && (
-              <div className="bg-white border-2 border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                {filteredHistoryPlayers.length === 0 ? (
-                  <div className="p-6 text-slate-400 font-bold text-center">No matches found.</div>
-                ) : (
-                  filteredHistoryPlayers.map(p => (
-                    <div 
-                      key={`search-${p.id}`} 
-                      className="p-5 border-b-2 border-slate-100 last:border-b-0 hover:bg-flatSecondary cursor-pointer flex justify-between items-center transition-colors group"
-                      onClick={() => setSelectedHistoryPlayer(p)}
-                    >
-                      <span className="font-black text-lg text-slate-800">{p.name}</span>
-                      <span className="flex items-center gap-1 text-sm font-bold text-slate-400 group-hover:text-cricketGreen uppercase tracking-widest transition-colors">
-                        Select <ChevronRight className="w-4 h-4"/>
-                      </span>
-                    </div>
-                  ))
-                )}
+            {/* Search Player History */}
+            <div className="space-y-4 border-t-2 border-slate-200 pt-6">
+              <h2 className="text-2xl font-black text-slate-900">Player History Search</h2>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <Search className="h-6 w-6 text-slate-400 stroke-[2.5]" />
+                </div>
+                <input 
+                  type="text"
+                  value={historySearchTerm}
+                  onChange={(e) => {
+                     setHistorySearchTerm(e.target.value);
+                     setSelectedHistoryPlayer(null);
+                  }}
+                  placeholder="Search admin roster by name..."
+                  className="w-full pl-12 pr-4 py-4 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-cricketGreen text-slate-900 placeholder-slate-400 font-bold text-lg transition-colors"
+                />
               </div>
-            )}
 
-            {selectedHistoryPlayer && (
-              <div className="bg-white border-2 border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-                <div className="bg-flatSecondary p-6 border-b-2 border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                  <div>
-                    <h3 className="text-xl font-black text-slate-900">{selectedHistoryPlayer.name}</h3>
-                    <p className="text-slate-500 font-medium text-sm mt-1">Full payment log</p>
+              {!selectedHistoryPlayer && historySearchTerm.trim() && (
+                <div className="bg-white border-2 border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                  {filteredHistoryPlayers.length === 0 ? (
+                    <div className="p-6 text-slate-400 font-bold text-center">No matches found.</div>
+                  ) : (
+                    filteredHistoryPlayers.map(p => (
+                      <div 
+                        key={`search-${p.id}`} 
+                        className="p-5 border-b-2 border-slate-100 last:border-b-0 hover:bg-flatSecondary cursor-pointer flex justify-between items-center transition-colors group"
+                        onClick={() => setSelectedHistoryPlayer(p)}
+                      >
+                        <span className="font-black text-lg text-slate-800">{p.name}</span>
+                        <span className="flex items-center gap-1 text-sm font-bold text-slate-400 group-hover:text-cricketGreen uppercase tracking-widest transition-colors">
+                          Select <ChevronRight className="w-4 h-4"/>
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {selectedHistoryPlayer && (
+                <div className="bg-white border-2 border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                  <div className="bg-flatSecondary p-6 border-b-2 border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div>
+                      <h3 className="text-xl font-black text-slate-900">{selectedHistoryPlayer.name}</h3>
+                      <p className="text-slate-500 font-medium text-sm mt-1">Full payment log</p>
+                    </div>
+                    <button 
+                      onClick={() => setSelectedHistoryPlayer(null)}
+                      className="w-full sm:w-auto text-sm font-bold text-slate-500 hover:text-slate-900 transition-colors uppercase tracking-widest border-2 border-slate-300 rounded-lg px-4 py-2 bg-white"
+                    >
+                      Clear
+                    </button>
                   </div>
-                  <button 
-                    onClick={() => setSelectedHistoryPlayer(null)}
-                    className="w-full sm:w-auto text-sm font-bold text-slate-500 hover:text-slate-900 transition-colors uppercase tracking-widest border-2 border-slate-300 rounded-lg px-4 py-2 bg-white"
-                  >
-                    Clear
-                  </button>
+                  <div className="p-4 sm:p-6 bg-[#f8fafc]">
+                     <PaymentTable history={playerHistory} loading={loadingHistory} />
+                  </div>
                 </div>
-                <div className="p-4 sm:p-6 bg-[#f8fafc]">
-                   <PaymentTable history={playerHistory} loading={loadingHistory} />
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </section>
         </div>
+
+        {/* Modal: Add Expense */}
+        {isExpenseModalOpen && (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white border-2 border-slate-200 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
+              <div className="p-6 border-b-2 border-slate-100 flex justify-between items-center bg-emerald-50">
+                <h2 className="text-2xl font-black text-emerald-900 flex items-center gap-2">
+                  <PlusCircle className="w-6 h-6 text-emerald-700"/> Log Club Expense
+                </h2>
+                <button 
+                   onClick={() => setIsExpenseModalOpen(false)}
+                   className="p-2 bg-white border-2 border-emerald-200 text-emerald-800 rounded-xl hover:bg-emerald-100 transition-colors"
+                >
+                   <X className="w-5 h-5"/>
+                </button>
+              </div>
+
+              <form onSubmit={handleAddExpense} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-1">Item Title / Description</label>
+                  <input
+                    type="text"
+                    required
+                    value={expenseTitle}
+                    onChange={(e) => setExpenseTitle(e.target.value)}
+                    placeholder="e.g. SG Leather Balls (Box of 12)"
+                    className="w-full bg-flatBg border-2 border-slate-300 p-3 rounded-xl font-bold outline-none focus:border-emerald-600 text-slate-800"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-1">Category</label>
+                    <select
+                      value={expenseCategory}
+                      onChange={(e) => setExpenseCategory(e.target.value)}
+                      className="w-full bg-flatBg border-2 border-slate-300 p-3 rounded-xl font-bold outline-none focus:border-emerald-600 text-slate-800"
+                    >
+                      <option value="Balls">Balls</option>
+                      <option value="Ground Fee">Ground Fee</option>
+                      <option value="Equipment">Equipment</option>
+                      <option value="Refreshments">Refreshments</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-1">Amount (Rs.)</label>
+                    <input
+                      type="number"
+                      required
+                      min="1"
+                      value={expenseAmount}
+                      onChange={(e) => setExpenseAmount(e.target.value)}
+                      placeholder="e.g. 3600"
+                      className="w-full bg-flatBg border-2 border-slate-300 p-3 rounded-xl font-bold outline-none focus:border-emerald-600 text-slate-800"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-1">Expense Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={expenseDate}
+                    onChange={(e) => setExpenseDate(e.target.value)}
+                    className="w-full bg-flatBg border-2 border-slate-300 p-3 rounded-xl font-bold outline-none focus:border-emerald-600 text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-1">Notes (Optional)</label>
+                  <input
+                    type="text"
+                    value={expenseNotes}
+                    onChange={(e) => setExpenseNotes(e.target.value)}
+                    placeholder="e.g. Purchased for T20 match at Green Park"
+                    className="w-full bg-flatBg border-2 border-slate-300 p-3 rounded-xl font-bold outline-none focus:border-emerald-600 text-slate-800"
+                  />
+                </div>
+
+                <div className="pt-2 flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsExpenseModalOpen(false)}
+                    className="px-5 py-3 rounded-xl font-bold border-2 border-slate-300 text-slate-600 hover:bg-slate-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingExpense}
+                    className="px-6 py-3 rounded-xl font-black bg-emerald-600 hover:bg-emerald-700 text-white transition-colors"
+                  >
+                    {isSubmittingExpense ? 'Saving...' : 'Record Expense'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* Modal: Remove Player Overlay */}
         {isRemoveModalOpen && (

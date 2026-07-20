@@ -4,6 +4,7 @@ import Navigation from './components/Navigation';
 import PublicDashboard from './pages/PublicDashboard';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
+import PlayerManagement from './pages/PlayerManagement';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider } from './context/AuthContext';
 
@@ -22,6 +23,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <AdminDashboard />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/admin/players" 
+                element={
+                  <ProtectedRoute>
+                    <PlayerManagement />
                   </ProtectedRoute>
                 } 
               />
