@@ -1,7 +1,13 @@
 import 'dotenv/config'
 import cors from 'cors'
 import express from 'express'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import { supabaseAdmin } from './supabaseAdmin.js'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 const app = express()
 const port = Number(process.env.PORT || 4000)
@@ -9,6 +15,11 @@ const weeklyFee = Number(process.env.WEEKLY_FEE || 50)
 
 app.use(cors())
 app.use(express.json())
+
+const clientDistPath = path.join(__dirname, '../client/dist')
+if (fs.existsSync(clientDistPath)) {
+  app.use(express.static(clientDistPath))
+}
 
 function getCurrentWeekIdentifier() {
   const now = new Date()
@@ -658,6 +669,15 @@ app.get('/api/players/:playerId/payments', async (req, res) => {
     res.json({ ok: true, payments: data || [] })
   } catch (error) {
     res.status(500).json({ ok: false, error: 'Unexpected error getting history' })
+  }
+})
+
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) return next()
+  if (fs.existsSync(path.join(clientDistPath, 'index.html'))) {
+    res.sendFile(path.join(clientDistPath, 'index.html'))
+  } else {
+    next()
   }
 })
 
