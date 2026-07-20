@@ -672,13 +672,14 @@ app.get('/api/players/:playerId/payments', async (req, res) => {
   }
 })
 
-app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api')) return next()
-  if (fs.existsSync(path.join(clientDistPath, 'index.html'))) {
-    res.sendFile(path.join(clientDistPath, 'index.html'))
-  } else {
-    next()
+app.use((req, res, next) => {
+  if (req.method === 'GET' && !req.path.startsWith('/api')) {
+    const indexPath = path.join(clientDistPath, 'index.html')
+    if (fs.existsSync(indexPath)) {
+      return res.sendFile(indexPath)
+    }
   }
+  next()
 })
 
 app.listen(port, () => {
